@@ -68,10 +68,7 @@ def _generate_spec(prompt: str, output: str, as_json: bool, interactive: bool, p
     if as_json:
         content = json.dumps(result.to_json_dict(), indent=2)
     else:
-        if provider and getattr(provider, "is_llm_provider", False):
-            content = provider.generate_spec_markdown(result.draft)
-        else:
-            content = render_spec_markdown(result.draft)
+        content = render_spec_markdown(result.draft)
 
     output_path.write_text(content + ("" if content.endswith("\n") else "\n"), encoding="utf-8")
     return None
