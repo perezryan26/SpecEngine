@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .engine import build_spec_draft
+from .providers import OpenAIProvider, ProviderError
 from .renderer import render_spec_markdown
 
 
@@ -31,7 +32,13 @@ def _run_generate(args: argparse.Namespace) -> int:
         sys.stderr.write("Invalid input: --prompt is required and must be non-empty.\n")
         return 2
 
-    result = build_spec_draft(prompt=prompt, interactive=args.interactive)
+    try:
+        provider = OpenAIProvider(model=args.model) if args.use_llm else None
+    except ProviderError as exc:
+        sys.stderr.write(f"Internal error: {exc}\n")
+        return 3
+
+    result = build_spec_draft(prompt=prompt, interactive=args.interactive, provider=provider)
 
     if not args.interactive and result.missing_fields:
         fields = ", ".join(result.missing_fields)
@@ -64,9 +71,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Enable interactive follow-up for missing fields (default: true)",
     )
+    generate.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Use OpenAI-based extraction/follow-up/normalization.",
+    )
+    generate.add_argument(
+        "--model",
+        type=str,
+        default="",
+        help="OpenAI model name (used only when --use-llm is set).",
+    )
     return parser
 
 
 if __name__ == "__main__":
     main()
-

@@ -55,6 +55,22 @@ class SpecDraft:
             for name in REQUIRED_FIELDS
         }
 
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Dict[str, str | float]]) -> "SpecDraft":
+        draft = cls()
+        for field_name in REQUIRED_FIELDS:
+            field_payload = payload.get(field_name, {})
+            value = str(field_payload.get("value", "")).strip()
+            confidence_raw = field_payload.get("confidence", 0.0)
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+            rationale = str(field_payload.get("rationale", "")).strip()
+            setattr(draft, field_name, FieldCandidate(value=value, confidence=confidence, rationale=rationale))
+        return draft
+
     def missing_fields(self, min_confidence: float = 0.5) -> List[str]:
         missing: List[str] = []
         for field_name in REQUIRED_FIELDS:
@@ -70,4 +86,3 @@ class SpecDraft:
             if candidate.value.strip() and min_confidence <= candidate.confidence < accepted_confidence:
                 ambiguous.append(field_name)
         return ambiguous
-

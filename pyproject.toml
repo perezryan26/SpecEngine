@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 authors = [{ name = "SpecEngine" }]
 dependencies = []
 
+[project.optional-dependencies]
+llm = ["openai>=1.0.0"]
+
 [project.scripts]
 spec-engine = "spec_engine.cli:main"
 
@@ -19,4 +22,3 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

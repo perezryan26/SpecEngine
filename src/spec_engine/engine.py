@@ -4,19 +4,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .models import FieldCandidate, REQUIRED_FIELDS, SpecDraft
-from .parser import normalize_user_field_value, parse_prompt
-
-
-FIELD_PROMPTS = {
-    "project_name": "What is the project name?",
-    "project_type": "What is the project type? (library, service, CLI tool, web app, backend API, frontend UI, full-stack app)",
-    "primary_goal": "What is the primary goal in one sentence?",
-    "target_users": "Who are the target users?",
-    "inputs": "What inputs does the system receive?",
-    "outputs": "What outputs does the system produce?",
-    "constraints": "What constraints must be followed? (language/runtime/performance/security/platform)",
-    "non_goals": "What is explicitly out of scope (non-goals)?",
-}
+from .parser import normalize_user_field_value
+from .providers import LocalProvider, SpecProvider
 
 
 @dataclass
@@ -36,11 +25,14 @@ class BuildResult:
 def build_spec_draft(
     prompt: str,
     interactive: bool,
+    provider: SpecProvider | None = None,
     ask_fn: Callable[[str], str] | None = None,
 ) -> BuildResult:
-    draft = parse_prompt(prompt)
+    selected_provider = provider or LocalProvider()
+    draft = selected_provider.extract_requirements(prompt)
     if interactive:
-        _resolve_gaps_interactively(draft, ask_fn or _default_ask)
+        _resolve_gaps_interactively(draft, selected_provider, ask_fn or _default_ask)
+    draft = selected_provider.normalize_spec(draft)
     return BuildResult(
         draft=draft,
         missing_fields=draft.missing_fields(),
@@ -48,13 +40,13 @@ def build_spec_draft(
     )
 
 
-def _resolve_gaps_interactively(draft: SpecDraft, ask_fn: Callable[[str], str]) -> None:
+def _resolve_gaps_interactively(draft: SpecDraft, provider: SpecProvider, ask_fn: Callable[[str], str]) -> None:
     for field_name in REQUIRED_FIELDS:
         candidate = getattr(draft, field_name)
         needs_answer = not candidate.value.strip() or candidate.confidence < 0.8
         if not needs_answer:
             continue
-        prompt = FIELD_PROMPTS[field_name]
+        prompt = provider.generate_followup(field_name, draft)
         answer = ask_fn(prompt).strip()
         if not answer:
             continue

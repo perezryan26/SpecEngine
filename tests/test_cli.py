@@ -42,6 +42,35 @@ class CLITests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertTrue(out.exists())
 
+    def test_generate_use_llm_without_api_key_returns_3(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "SPEC.md"
+            env = dict(os.environ)
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("OPENROUTER_API_KEY", None)
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "spec_engine.cli",
+                    "generate",
+                    "--prompt",
+                    "Project Name: Demo",
+                    "--use-llm",
+                    "--no-interactive",
+                    "--output",
+                    str(out),
+                ],
+                text=True,
+                capture_output=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("OPENAI_API_KEY", result.stderr)
+            self.assertIn("OPENROUTER_API_KEY", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
