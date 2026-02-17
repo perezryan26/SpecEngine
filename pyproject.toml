@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spec-engine"
+version = "0.1.0"
+description = "CLI engine that converts prompts into structured SPEC markdown."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "SpecEngine" }]
+dependencies = []
+
+[project.scripts]
+spec-engine = "spec_engine.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
