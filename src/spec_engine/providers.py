@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .models import REQUIRED_FIELDS, SpecDraft
 from .parser import parse_prompt
@@ -55,6 +55,7 @@ class OpenAIProvider:
     model: str = ""
     provider_name: str | None = None
     api_key: str | None = None
+    observer: Callable[[dict], None] | None = None
     max_retries: int = 1
     retry_delay_seconds: float = 0.3
 
@@ -74,7 +75,7 @@ class OpenAIProvider:
             + ". Each key must map to object: {\"value\": string, \"confidence\": number, \"rationale\": string}. "
             "confidence must be between 0 and 1. No extra keys."
         )
-        payload = self._call_json(instructions=instructions, input_text=prompt)
+        payload = self._call_json(stage="parse_prompt", instructions=instructions, input_text=prompt)
         return self._validate_and_build(payload)
 
     def generate_followup(self, missing_field: str, draft: SpecDraft) -> str:
@@ -90,6 +91,7 @@ class OpenAIProvider:
             }
         )
         payload = self._call_json(
+            stage="generate_followup",
             instructions=instructions + " Return JSON: {\"question\": \"...\"}.",
             input_text=input_text,
         )
@@ -104,14 +106,15 @@ class OpenAIProvider:
             "Do not invent missing facts. "
             "Return same schema used for extraction."
         )
-        payload = self._call_json(instructions=instructions, input_text=json.dumps(draft.as_dict()))
+        payload = self._call_json(stage="normalize", instructions=instructions, input_text=json.dumps(draft.as_dict()))
         return self._validate_and_build(payload)
 
-    def _call_json(self, instructions: str, input_text: str) -> dict:
+    def _call_json(self, stage: str, instructions: str, input_text: str) -> dict:
         normalized_instructions = _ensure_json_keyword(instructions)
         normalized_input = _ensure_json_keyword(input_text)
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            started = time.time()
             try:
                 response = self._client.responses.create(
                     model=self.model,
@@ -122,9 +125,32 @@ class OpenAIProvider:
                 raw = getattr(response, "output_text", "") or ""
                 if not raw:
                     raise ProviderError("LLM returned empty response.")
-                return json.loads(raw)
+                payload = json.loads(raw)
+                prompt_tokens, completion_tokens, total_tokens = _extract_usage_tokens(response)
+                self._emit_call_event(
+                    stage=stage,
+                    latency_ms=int((time.time() - started) * 1000),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    estimated_cost_usd=_estimate_cost_usd(self.model, prompt_tokens, completion_tokens),
+                    retry_count=attempt,
+                    schema_valid=True,
+                )
+                return payload
             except Exception as exc:
                 last_error = exc
+                if attempt == self.max_retries:
+                    self._emit_call_event(
+                        stage=stage,
+                        latency_ms=int((time.time() - started) * 1000),
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        estimated_cost_usd=0.0,
+                        retry_count=attempt,
+                        schema_valid=False,
+                    )
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay_seconds)
                     continue
@@ -158,6 +184,33 @@ class OpenAIProvider:
                 "rationale": rationale.strip(),
             }
         return SpecDraft.from_dict(normalized)
+
+    def _emit_call_event(
+        self,
+        stage: str,
+        latency_ms: int,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        estimated_cost_usd: float,
+        retry_count: int,
+        schema_valid: bool,
+    ) -> None:
+        if not self.observer:
+            return
+        self.observer(
+            {
+                "stage": stage,
+                "model": self.model,
+                "latency_ms": latency_ms,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "estimated_cost_usd": round(estimated_cost_usd, 8),
+                "retry_count": retry_count,
+                "schema_valid": schema_valid,
+            }
+        )
 
 
 def resolve_llm_client_config(provider_name: str | None = None, api_key: str | None = None) -> dict:
@@ -197,3 +250,23 @@ def _ensure_json_keyword(text: str) -> str:
     if "json" in value.lower():
         return value
     return f"{value}\nReturn valid json."
+
+
+def _extract_usage_tokens(response: object) -> tuple[int, int, int]:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return 0, 0, 0
+    prompt_tokens = int(getattr(usage, "input_tokens", 0) or getattr(usage, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "output_tokens", 0) or getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens))
+    return prompt_tokens, completion_tokens, total_tokens
+
+
+def _estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    pricing_by_model = {
+        "gpt-5-mini": {"input": 0.25, "output": 2.0},
+        "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    }
+    pricing = pricing_by_model.get(model, {"input": 0.0, "output": 0.0})
+    return (prompt_tokens / 1_000_000) * pricing["input"] + (completion_tokens / 1_000_000) * pricing["output"]

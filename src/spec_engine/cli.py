@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .config_store import get_api_key, set_api_key
 from .engine import build_spec_draft
+from .observability import RunLogger
 from .providers import OpenAIProvider, ProviderError
 from .quality import validate_spec_markdown
 from .renderer import render_spec_markdown
@@ -37,10 +38,12 @@ def _run_generate(args: argparse.Namespace) -> int:
         sys.stderr.write("Invalid input: --prompt is required and must be non-empty.\n")
         return 2
 
+    logger = RunLogger(mode="interactive" if args.interactive else "non_interactive", output_path=args.output)
     try:
-        provider = OpenAIProvider(model=args.model) if args.use_llm else None
+        provider = OpenAIProvider(model=args.model, observer=logger.log_llm_call) if args.use_llm else None
     except ProviderError as exc:
         sys.stderr.write(f"Internal error: {exc}\n")
+        logger.finalize(result="failure", exit_code=3)
         return 3
 
     result = _generate_spec(
@@ -51,7 +54,9 @@ def _run_generate(args: argparse.Namespace) -> int:
         provider=provider,
     )
     if isinstance(result, int):
+        logger.finalize(result="failure", exit_code=result)
         return result
+    logger.finalize(result="success", exit_code=0)
     return 0
 
 
@@ -127,6 +132,7 @@ def _run_api_keys_menu() -> None:
 def _run_guided_generate() -> int:
     use_llm = _ask_yes_no("Use an LLM? (y/n)")
     provider = None
+    provider_name = ""
     if use_llm:
         provider_name = _ask_provider()
         token = get_api_key(provider_name)
@@ -149,6 +155,9 @@ def _run_guided_generate() -> int:
     as_json = _ask_output_representation()
     if as_json and output_path == "./SPEC.md":
         output_path = "./SPEC.json"
+    logger = RunLogger(mode="interactive", output_path=output_path)
+    if provider:
+        provider.observer = logger.log_llm_call
 
     result = _generate_spec(
         prompt=prompt,
@@ -158,7 +167,9 @@ def _run_guided_generate() -> int:
         provider=provider,
     )
     if isinstance(result, int):
+        logger.finalize(result="failure", exit_code=result)
         return result
+    logger.finalize(result="success", exit_code=0)
     print(f"Generated: {output_path}")
     return 0
 
