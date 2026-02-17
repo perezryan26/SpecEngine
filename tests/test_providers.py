@@ -29,6 +29,11 @@ class ProviderConfigTests(unittest.TestCase):
             with self.assertRaises(ProviderError):
                 resolve_llm_client_config()
 
+    def test_explicit_openrouter_config(self) -> None:
+        cfg = resolve_llm_client_config(provider_name="openrouter", api_key="sk-or-test")
+        self.assertEqual(cfg["api_key"], "sk-or-test")
+        self.assertEqual(cfg["base_url"], "https://openrouter.ai/api/v1")
+
 
 if __name__ == "__main__":
     unittest.main()

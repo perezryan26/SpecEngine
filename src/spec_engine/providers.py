@@ -50,11 +50,13 @@ class LocalProvider:
 @dataclass
 class OpenAIProvider:
     model: str = ""
+    provider_name: str | None = None
+    api_key: str | None = None
     max_retries: int = 1
     retry_delay_seconds: float = 0.3
 
     def __post_init__(self) -> None:
-        client_config = resolve_llm_client_config()
+        client_config = resolve_llm_client_config(provider_name=self.provider_name, api_key=self.api_key)
         try:
             from openai import OpenAI  # type: ignore
         except ImportError as exc:
@@ -153,7 +155,10 @@ class OpenAIProvider:
         return SpecDraft.from_dict(normalized)
 
 
-def resolve_llm_client_config() -> dict:
+def resolve_llm_client_config(provider_name: str | None = None, api_key: str | None = None) -> dict:
+    if provider_name and api_key:
+        return _provider_to_client_config(provider_name, api_key)
+
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if openrouter_key:
         return {
@@ -168,3 +173,15 @@ def resolve_llm_client_config() -> dict:
     raise ProviderError(
         "Missing API key. Set OPENAI_API_KEY or OPENROUTER_API_KEY when --use-llm is enabled."
     )
+
+
+def _provider_to_client_config(provider_name: str, api_key: str) -> dict:
+    provider = provider_name.strip().lower()
+    key = api_key.strip()
+    if not key:
+        raise ProviderError("API key is empty.")
+    if provider == "openrouter":
+        return {"api_key": key, "base_url": "https://openrouter.ai/api/v1"}
+    if provider == "openai":
+        return {"api_key": key}
+    raise ProviderError(f"Unsupported provider: {provider_name}")
