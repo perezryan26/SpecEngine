@@ -24,6 +24,9 @@ class SpecProvider(Protocol):
     def normalize_spec(self, draft: SpecDraft) -> SpecDraft:
         ...
 
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        ...
+
 
 @dataclass
 class LocalProvider:
@@ -47,6 +50,11 @@ class LocalProvider:
 
     def normalize_spec(self, draft: SpecDraft) -> SpecDraft:
         return draft
+
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        from .renderer import render_spec_markdown
+
+        return render_spec_markdown(draft)
 
 
 @dataclass
@@ -107,6 +115,31 @@ class OpenAIProvider:
         payload = self._call_json(instructions=instructions, input_text=json.dumps(draft.as_dict()))
         return self._validate_and_build(payload)
 
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        instructions = (
+            "Generate a complete markdown SPEC using this exact structure and headings:\n"
+            "# Project Specification\n"
+            "## 1. Overview\n"
+            "## 2. Problem Statement\n"
+            "## 3. Scope\n"
+            "### In Scope\n"
+            "### Out of Scope\n"
+            "## 4. Functional Requirements\n"
+            "## 5. Non-Functional Requirements\n"
+            "## 6. Inputs\n"
+            "## 7. Outputs\n"
+            "## 8. Constraints\n"
+            "## 9. Assumptions\n"
+            "## 10. Acceptance Criteria\n"
+            "Use only these sections. No additional sections.\n"
+            "Use the provided required fields as source of truth.\n"
+            "Add concise additional context that improves implementability.\n"
+            "Keep requirements explicit and testable."
+        )
+        content = self._call_text(instructions=instructions, input_text=json.dumps(draft.as_dict()))
+        self._validate_spec_markdown(content)
+        return content
+
     def _call_json(self, instructions: str, input_text: str) -> dict:
         normalized_instructions = _ensure_json_keyword(instructions)
         normalized_input = _ensure_json_keyword(input_text)
@@ -123,6 +156,27 @@ class OpenAIProvider:
                 if not raw:
                     raise ProviderError("LLM returned empty response.")
                 return json.loads(raw)
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay_seconds)
+                    continue
+                break
+        raise ProviderError(f"LLM request failed after {self.max_retries + 1} attempt(s): {last_error}")
+
+    def _call_text(self, instructions: str, input_text: str) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._client.responses.create(
+                    model=self.model,
+                    instructions=instructions,
+                    input=input_text,
+                )
+                raw = getattr(response, "output_text", "") or ""
+                if not raw.strip():
+                    raise ProviderError("LLM returned empty response.")
+                return raw.strip() + ("\n" if not raw.endswith("\n") else "")
             except Exception as exc:
                 last_error = exc
                 if attempt < self.max_retries:
@@ -158,6 +212,26 @@ class OpenAIProvider:
                 "rationale": rationale.strip(),
             }
         return SpecDraft.from_dict(normalized)
+
+    def _validate_spec_markdown(self, content: str) -> None:
+        required_headings = [
+            "# Project Specification",
+            "## 1. Overview",
+            "## 2. Problem Statement",
+            "## 3. Scope",
+            "### In Scope",
+            "### Out of Scope",
+            "## 4. Functional Requirements",
+            "## 5. Non-Functional Requirements",
+            "## 6. Inputs",
+            "## 7. Outputs",
+            "## 8. Constraints",
+            "## 9. Assumptions",
+            "## 10. Acceptance Criteria",
+        ]
+        for heading in required_headings:
+            if heading not in content:
+                raise ProviderError(f"LLM spec markdown missing required heading: {heading}")
 
 
 def resolve_llm_client_config(provider_name: str | None = None, api_key: str | None = None) -> dict:
