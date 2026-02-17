@@ -74,7 +74,10 @@ def _generate_spec(prompt: str, output: str, as_json: bool, interactive: bool, p
     if as_json:
         content = json.dumps(result.to_json_dict(), indent=2)
     else:
-        content = render_spec_markdown(result.draft)
+        if provider and getattr(provider, "is_llm_provider", False):
+            content = provider.generate_spec_markdown(result.draft)
+        else:
+            content = render_spec_markdown(result.draft)
         errors = validate_spec_markdown(content)
         if errors:
             sys.stderr.write("Internal error: Generated markdown failed validation.\n")

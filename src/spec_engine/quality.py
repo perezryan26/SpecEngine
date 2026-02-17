@@ -19,6 +19,21 @@ EXPECTED_HEADINGS = [
 ]
 
 
+def coerce_to_list_markdown(content: str) -> str:
+    output: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            output.append("")
+            continue
+        if line.startswith("#") or line.startswith("- ") or re.match(r"^\d+\.\s", line):
+            output.append(line)
+            continue
+        output.append(f"- {line}")
+    normalized = "\n".join(output)
+    return normalized + ("" if normalized.endswith("\n") else "\n")
+
+
 def validate_spec_markdown(content: str) -> list[str]:
     errors: list[str] = []
     lines = content.splitlines()
@@ -40,4 +55,3 @@ def validate_spec_markdown(content: str) -> list[str]:
             errors.append(f"Line {index} contains non-list prose or unsupported formatting: {line}")
 
     return errors
-

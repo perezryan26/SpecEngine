@@ -24,6 +24,9 @@ class SpecProvider(Protocol):
     def normalize_spec(self, draft: SpecDraft) -> SpecDraft:
         ...
 
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        ...
+
 
 @dataclass
 class LocalProvider:
@@ -47,6 +50,11 @@ class LocalProvider:
 
     def normalize_spec(self, draft: SpecDraft) -> SpecDraft:
         return draft
+
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        from .renderer import render_spec_markdown
+
+        return render_spec_markdown(draft)
 
 
 @dataclass
@@ -109,6 +117,39 @@ class OpenAIProvider:
         payload = self._call_json(stage="normalize", instructions=instructions, input_text=json.dumps(draft.as_dict()))
         return self._validate_and_build(payload)
 
+    def generate_spec_markdown(self, draft: SpecDraft) -> str:
+        instructions = (
+            "Generate a complete markdown specification using the provided field candidates as source of truth. "
+            "Use this exact section structure and ordering:\n"
+            "# Project Specification\n"
+            "## 1. Overview\n"
+            "## 2. Problem Statement\n"
+            "## 3. Scope\n"
+            "### In Scope\n"
+            "### Out of Scope\n"
+            "## 4. Functional Requirements\n"
+            "## 5. Non-Functional Requirements\n"
+            "## 6. Inputs\n"
+            "## 7. Outputs\n"
+            "## 8. Constraints\n"
+            "## 9. Assumptions\n"
+            "## 10. Acceptance Criteria\n"
+            "Provide concise additional implementation context and educated assumptions grounded in provided details. "
+            "No extra headings. Keep statements explicit and testable."
+        )
+        output = self._call_text(
+            stage="generate_spec",
+            instructions=instructions,
+            input_text=json.dumps(draft.as_dict()),
+        )
+        from .quality import coerce_to_list_markdown, validate_spec_markdown
+
+        output = coerce_to_list_markdown(output)
+        errors = validate_spec_markdown(output)
+        if errors:
+            raise ProviderError("LLM-generated spec markdown failed validation: " + "; ".join(errors))
+        return output
+
     def _call_json(self, stage: str, instructions: str, input_text: str) -> dict:
         normalized_instructions = _ensure_json_keyword(instructions)
         normalized_input = _ensure_json_keyword(input_text)
@@ -138,6 +179,51 @@ class OpenAIProvider:
                     schema_valid=True,
                 )
                 return payload
+            except Exception as exc:
+                last_error = exc
+                if attempt == self.max_retries:
+                    self._emit_call_event(
+                        stage=stage,
+                        latency_ms=int((time.time() - started) * 1000),
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        estimated_cost_usd=0.0,
+                        retry_count=attempt,
+                        schema_valid=False,
+                    )
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay_seconds)
+                    continue
+                break
+        raise ProviderError(f"LLM request failed after {self.max_retries + 1} attempt(s): {last_error}")
+
+    def _call_text(self, stage: str, instructions: str, input_text: str) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            started = time.time()
+            try:
+                response = self._client.responses.create(
+                    model=self.model,
+                    instructions=instructions,
+                    input=input_text,
+                )
+                raw = (getattr(response, "output_text", "") or "").strip()
+                if not raw:
+                    raise ProviderError("LLM returned empty response.")
+                output = raw if raw.endswith("\n") else raw + "\n"
+                prompt_tokens, completion_tokens, total_tokens = _extract_usage_tokens(response)
+                self._emit_call_event(
+                    stage=stage,
+                    latency_ms=int((time.time() - started) * 1000),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    estimated_cost_usd=_estimate_cost_usd(self.model, prompt_tokens, completion_tokens),
+                    retry_count=attempt,
+                    schema_valid=True,
+                )
+                return output
             except Exception as exc:
                 last_error = exc
                 if attempt == self.max_retries:

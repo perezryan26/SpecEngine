@@ -1,7 +1,7 @@
 import unittest
 
 from spec_engine.models import FieldCandidate, SpecDraft
-from spec_engine.quality import validate_spec_markdown
+from spec_engine.quality import coerce_to_list_markdown, validate_spec_markdown
 from spec_engine.renderer import render_spec_markdown
 
 
@@ -38,7 +38,38 @@ class QualityTests(unittest.TestCase):
         errors = validate_spec_markdown(content)
         self.assertTrue(any("unsupported formatting" in e for e in errors))
 
+    def test_coerce_converts_prose_to_bullets(self) -> None:
+        content = (
+            "# Project Specification\n\n"
+            "## 1. Overview\n"
+            "Plain prose line.\n"
+            "## 2. Problem Statement\n"
+            "Another prose line.\n"
+            "## 3. Scope\n"
+            "### In Scope\n"
+            "Thing one\n"
+            "### Out of Scope\n"
+            "Thing two\n"
+            "## 4. Functional Requirements\n"
+            "1. Keep this number.\n"
+            "## 5. Non-Functional Requirements\n"
+            "Reliability text.\n"
+            "## 6. Inputs\n"
+            "Input text.\n"
+            "## 7. Outputs\n"
+            "Output text.\n"
+            "## 8. Constraints\n"
+            "Constraint text.\n"
+            "## 9. Assumptions\n"
+            "Assumption text.\n"
+            "## 10. Acceptance Criteria\n"
+            "Criteria text.\n"
+        )
+        coerced = coerce_to_list_markdown(content)
+        self.assertIn("- Plain prose line.", coerced)
+        self.assertIn("1. Keep this number.", coerced)
+        self.assertEqual(validate_spec_markdown(coerced), [])
+
 
 if __name__ == "__main__":
     unittest.main()
-
