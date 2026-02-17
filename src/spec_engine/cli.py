@@ -9,6 +9,7 @@ from pathlib import Path
 from .config_store import get_api_key, set_api_key
 from .engine import build_spec_draft
 from .providers import OpenAIProvider, ProviderError
+from .quality import validate_spec_markdown
 from .renderer import render_spec_markdown
 
 
@@ -69,6 +70,12 @@ def _generate_spec(prompt: str, output: str, as_json: bool, interactive: bool, p
         content = json.dumps(result.to_json_dict(), indent=2)
     else:
         content = render_spec_markdown(result.draft)
+        errors = validate_spec_markdown(content)
+        if errors:
+            sys.stderr.write("Internal error: Generated markdown failed validation.\n")
+            for item in errors:
+                sys.stderr.write(f"- {item}\n")
+            return 3
 
     output_path.write_text(content + ("" if content.endswith("\n") else "\n"), encoding="utf-8")
     return None
