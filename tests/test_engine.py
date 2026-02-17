@@ -56,7 +56,29 @@ class EngineTests(unittest.TestCase):
         )
         self.assertEqual(result.missing_fields, [])
 
+    def test_llm_provider_followups_capped_at_three(self) -> None:
+        provider = FakeProvider()
+        provider.is_llm_provider = True
+        answers = {
+            "Question for project_type?": "CLI tool",
+            "Question for target_users?": "Developers",
+            "Question for inputs?": "Prompt text",
+            "Question for outputs?": "SPEC markdown",
+            "Question for constraints?": "Python 3.10+",
+            "Question for non_goals?": "No GUI",
+        }
+
+        def ask_fn(question: str) -> str:
+            return answers[question]
+
+        build_spec_draft(
+            prompt="irrelevant",
+            interactive=True,
+            provider=provider,
+            ask_fn=ask_fn,
+        )
+        self.assertEqual(provider.followup_calls, ["project_type", "target_users", "inputs"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

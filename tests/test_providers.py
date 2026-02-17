@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from spec_engine.providers import ProviderError, resolve_llm_client_config
+from spec_engine.providers import ProviderError, _ensure_json_keyword, resolve_llm_client_config
 
 
 class ProviderConfigTests(unittest.TestCase):
@@ -33,6 +33,10 @@ class ProviderConfigTests(unittest.TestCase):
         cfg = resolve_llm_client_config(provider_name="openrouter", api_key="sk-or-test")
         self.assertEqual(cfg["api_key"], "sk-or-test")
         self.assertEqual(cfg["base_url"], "https://openrouter.ai/api/v1")
+
+    def test_json_keyword_guard(self) -> None:
+        self.assertIn("json", _ensure_json_keyword("Return object").lower())
+        self.assertEqual(_ensure_json_keyword("already json"), "already json")
 
 
 if __name__ == "__main__":

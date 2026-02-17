@@ -31,7 +31,13 @@ def build_spec_draft(
     selected_provider = provider or LocalProvider()
     draft = selected_provider.extract_requirements(prompt)
     if interactive:
-        _resolve_gaps_interactively(draft, selected_provider, ask_fn or _default_ask)
+        max_followups = 3 if getattr(selected_provider, "is_llm_provider", False) else None
+        _resolve_gaps_interactively(
+            draft,
+            selected_provider,
+            ask_fn or _default_ask,
+            max_followups=max_followups,
+        )
     draft = selected_provider.normalize_spec(draft)
     return BuildResult(
         draft=draft,
@@ -40,13 +46,22 @@ def build_spec_draft(
     )
 
 
-def _resolve_gaps_interactively(draft: SpecDraft, provider: SpecProvider, ask_fn: Callable[[str], str]) -> None:
+def _resolve_gaps_interactively(
+    draft: SpecDraft,
+    provider: SpecProvider,
+    ask_fn: Callable[[str], str],
+    max_followups: int | None = None,
+) -> None:
+    followups_asked = 0
     for field_name in REQUIRED_FIELDS:
+        if max_followups is not None and followups_asked >= max_followups:
+            break
         candidate = getattr(draft, field_name)
         needs_answer = not candidate.value.strip() or candidate.confidence < 0.8
         if not needs_answer:
             continue
         prompt = provider.generate_followup(field_name, draft)
+        followups_asked += 1
         answer = ask_fn(prompt).strip()
         if not answer:
             continue

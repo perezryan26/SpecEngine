@@ -27,6 +27,8 @@ class SpecProvider(Protocol):
 
 @dataclass
 class LocalProvider:
+    is_llm_provider: bool = False
+
     def extract_requirements(self, prompt: str) -> SpecDraft:
         return parse_prompt(prompt)
 
@@ -49,6 +51,7 @@ class LocalProvider:
 
 @dataclass
 class OpenAIProvider:
+    is_llm_provider: bool = True
     model: str = ""
     provider_name: str | None = None
     api_key: str | None = None
@@ -105,13 +108,15 @@ class OpenAIProvider:
         return self._validate_and_build(payload)
 
     def _call_json(self, instructions: str, input_text: str) -> dict:
+        normalized_instructions = _ensure_json_keyword(instructions)
+        normalized_input = _ensure_json_keyword(input_text)
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client.responses.create(
                     model=self.model,
-                    instructions=instructions,
-                    input=input_text,
+                    instructions=normalized_instructions,
+                    input=normalized_input,
                     text={"format": {"type": "json_object"}},
                 )
                 raw = getattr(response, "output_text", "") or ""
@@ -185,3 +190,10 @@ def _provider_to_client_config(provider_name: str, api_key: str) -> dict:
     if provider == "openai":
         return {"api_key": key}
     raise ProviderError(f"Unsupported provider: {provider_name}")
+
+
+def _ensure_json_keyword(text: str) -> str:
+    value = (text or "").strip()
+    if "json" in value.lower():
+        return value
+    return f"{value}\nReturn valid json."
